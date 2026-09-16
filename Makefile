@@ -49,4 +49,10 @@ release: lint test
 clean:
 	rm -rf ${DIRBASE}/*
 
-.PHONY: all freebsd linux windows docker dep lint test release clean
+run-server: ## Run local server with admin interface
+	go run main.go server --port 8080 --admin 127.0.0.1:9000 --reverse --verbose
+
+run-client: ## Run local client with admin interface
+	go run main.go client --admin 127.0.0.1:9001 --verbose http://127.0.0.1:8080 3000:127.0.0.1:8080
+
+.PHONY: all freebsd linux windows docker dep lint test release clean run-server run-client

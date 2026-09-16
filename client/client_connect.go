@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -24,10 +25,21 @@ func (c *Client) connectionLoop(ctx context.Context) error {
 		Max: c.config.MaxRetryInterval,
 	}
 	for {
+		c.adminMu.Lock()
+		c.connState = "connecting"
+		c.adminMu.Unlock()
+		if c.AdminServer != nil {
+			c.AdminServer.Hub().AddLog(fmt.Sprintf("Connecting to %s...", c.server))
+		}
+
 		connected, err := c.connectionOnce(ctx)
 		// Cancellation is a normal shutdown, even when the final connection
 		// attempt also consumes the configured retry budget.
 		if ctx.Err() != nil {
+			c.adminMu.Lock()
+			c.connState = "disconnected"
+			c.connectedAt = nil
+			c.adminMu.Unlock()
 			c.Infof("Cancelled")
 			return nil
 		}
@@ -38,6 +50,13 @@ func (c *Client) connectionLoop(ctx context.Context) error {
 		//connection error
 		attempt := int(b.Attempt())
 		maxAttempt := c.config.MaxRetryCount
+
+		c.adminMu.Lock()
+		c.connState = "disconnected"
+		c.connectedAt = nil
+		c.retryAttempt = attempt
+		c.adminMu.Unlock()
+
 		//dont print closed-connection errors
 		if err != nil && strings.HasSuffix(err.Error(), "use of closed network connection") {
 			err = io.EOF
@@ -53,6 +72,9 @@ func (c *Client) connectionLoop(ctx context.Context) error {
 				msg += fmt.Sprintf(" (Attempt: %d/%s)", attempt, maxAttemptVal)
 			}
 			c.Infof("%s", msg)
+			if c.AdminServer != nil {
+				c.AdminServer.Hub().AddLog(msg)
+			}
 		}
 		//give up?
 		if maxAttempt >= 0 && attempt >= maxAttempt {
@@ -63,10 +85,19 @@ func (c *Client) connectionLoop(ctx context.Context) error {
 			return errors.New("connection attempts exhausted")
 		}
 		d := b.Duration()
+		c.adminMu.Lock()
+		c.nextRetryIn = d
+		c.adminMu.Unlock()
 		c.Infof("Retrying in %s...", d)
 		select {
 		case <-cos.AfterSignal(d):
 			continue //retry now
+		case <-c.reconnectCh:
+			c.Infof("Immediate reconnect triggered")
+			if c.AdminServer != nil {
+				c.AdminServer.Hub().AddLog("Immediate reconnect triggered via admin console")
+			}
+			continue
 		case <-ctx.Done():
 			c.Infof("Cancelled")
 			return nil
@@ -84,7 +115,15 @@ func (c *Client) connectionOnce(ctx context.Context) (connected bool, err error)
 		//still open
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	c.adminMu.Lock()
+	c.connCancel = cancel
+	c.adminMu.Unlock()
+	defer func() {
+		c.adminMu.Lock()
+		c.connCancel = nil
+		c.adminMu.Unlock()
+		cancel()
+	}()
 	//prepare dialer
 	d := websocket.Dialer{
 		HandshakeTimeout: settings.EnvDuration("WS_TIMEOUT", 45*time.Second),
@@ -105,9 +144,20 @@ func (c *Client) connectionOnce(ctx context.Context) (connected bool, err error)
 		return false, err
 	}
 	conn := cnet.NewWebSocketConn(wsConn)
+	counted := cnet.NewCountedConn(conn, func(n int) {
+		atomic.AddInt64(&c.totalRecv, int64(n))
+		if c.AdminServer != nil {
+			c.AdminServer.Hub().AddTraffic(0, int64(n))
+		}
+	}, func(n int) {
+		atomic.AddInt64(&c.totalSent, int64(n))
+		if c.AdminServer != nil {
+			c.AdminServer.Hub().AddTraffic(int64(n), 0)
+		}
+	})
 	// perform SSH handshake on net.Conn
 	c.Debugf("Handshaking...")
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, "", c.sshConfig)
+	sshConn, chans, reqs, err := ssh.NewClientConn(counted, "", c.sshConfig)
 	if err != nil {
 		e := err.Error()
 		if strings.Contains(e, "unable to authenticate") {
@@ -135,10 +185,34 @@ func (c *Client) connectionOnce(ctx context.Context) (connected bool, err error)
 	if len(configerr) > 0 {
 		return false, errors.New(string(configerr))
 	}
-	c.Infof("Connected (Latency %s)", time.Since(t0))
+	latency := time.Since(t0)
+	c.Infof("Connected (Latency %s)", latency)
+
+	now := time.Now()
+	c.adminMu.Lock()
+	c.connState = "connected"
+	c.connectedAt = &now
+	c.latency = latency.String()
+	c.retryAttempt = 0
+	c.adminMu.Unlock()
+
+	if c.AdminServer != nil {
+		c.AdminServer.Hub().AddLog(fmt.Sprintf("Connected to %s (latency: %s)", c.server, latency))
+	}
+
 	//connected, handover ssh connection for tunnel to use, and block
 	err = c.tunnel.BindSSH(ctx, sshConn, reqs, chans)
 	c.Infof("Disconnected")
+
+	c.adminMu.Lock()
+	c.connState = "disconnected"
+	c.connectedAt = nil
+	c.adminMu.Unlock()
+
+	if c.AdminServer != nil {
+		c.AdminServer.Hub().AddLog(fmt.Sprintf("Disconnected from %s", c.server))
+	}
+
 	connected = time.Since(t0) > 5*time.Second
 	return connected, err
 }

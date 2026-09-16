@@ -13,11 +13,15 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 	chshare "github.com/jpillora/chisel/share"
+	"github.com/jpillora/chisel/share/admin"
 	"github.com/jpillora/chisel/share/ccrypto"
 	"github.com/jpillora/chisel/share/cio"
 	"github.com/jpillora/chisel/share/cnet"
@@ -43,6 +47,8 @@ type Config struct {
 	Headers          http.Header                                                       `opts:"-"`
 	TLS              TLSConfig                                                         `opts:"mode=embedded"`
 	DialContext      func(ctx context.Context, network, addr string) (net.Conn, error) `opts:"-"`
+	Admin            string                                                            `opts:"name=admin,short=-" help:"An optional address (e.g. 127.0.0.1:9001) to serve the Admin Web UI and REST API."`
+	AdminAuth        string                                                            `opts:"name=admin-auth,short=-" help:"Optional credentials for the Admin Web UI/API in the form <user:pass>."`
 	Verbose          bool                                                              `opts:"name=verbose,short=v" help:"Enable verbose logging"`
 }
 
@@ -58,16 +64,27 @@ type TLSConfig struct {
 // Client represents a client instance
 type Client struct {
 	*cio.Logger
-	config    *Config
-	computed  settings.Config
-	sshConfig *ssh.ClientConfig
-	tlsConfig *tls.Config
-	proxyURL  *url.URL
-	server    string
-	connCount cnet.ConnCount
-	stop      func()
-	eg        *errgroup.Group
-	tunnel    *tunnel.Tunnel
+	config       *Config
+	computed     settings.Config
+	sshConfig    *ssh.ClientConfig
+	tlsConfig    *tls.Config
+	proxyURL     *url.URL
+	server       string
+	connCount    cnet.ConnCount
+	stop         func()
+	eg           *errgroup.Group
+	tunnel       *tunnel.Tunnel
+	AdminServer  *admin.Server
+	adminMu      sync.RWMutex
+	connState    string
+	connectedAt  *time.Time
+	retryAttempt int
+	nextRetryIn  time.Duration
+	latency      string
+	reconnectCh  chan struct{}
+	connCancel   context.CancelFunc
+	totalSent    int64
+	totalRecv    int64
 }
 
 // NewClient creates a new client instance
@@ -200,6 +217,19 @@ func NewClient(c *Config) (*Client, error) {
 		Socks:     hasReverse && hasSocks,
 		KeepAlive: client.config.KeepAlive,
 	})
+	client.connState = "disconnected"
+	client.reconnectCh = make(chan struct{}, 1)
+	if c.Admin != "" {
+		hub := admin.NewHub("client", chshare.BuildVersion, runtime.Version())
+		hub.SetClientStateProvider(client.GetClientState, client.TriggerReconnect)
+		client.Logger.SetHook(func(msg string) {
+			hub.AddLog(msg)
+		})
+		client.AdminServer = admin.NewServer(client.Logger, hub, admin.ServerConfig{
+			Addr: c.Admin,
+			Auth: c.AdminAuth,
+		})
+	}
 	return client, nil
 }
 
@@ -257,6 +287,11 @@ func (c *Client) Start(ctx context.Context) error {
 	c.stop = cancel
 	eg, ctx := errgroup.WithContext(ctx)
 	c.eg = eg
+	if c.AdminServer != nil {
+		if err := c.AdminServer.Start(ctx); err != nil {
+			return err
+		}
+	}
 	via := ""
 	if c.proxyURL != nil {
 		via = " via " + c.proxyURL.String()
@@ -328,3 +363,64 @@ func (c *Client) Close() error {
 	}
 	return nil
 }
+
+// GetClientState returns telemetry information about the client connection and tunnels
+func (c *Client) GetClientState() *admin.ClientState {
+	c.adminMu.RLock()
+	defer c.adminMu.RUnlock()
+
+	sent := atomic.LoadInt64(&c.totalSent)
+	recv := atomic.LoadInt64(&c.totalRecv)
+	var activeConns int32
+	if c.tunnel != nil {
+		activeConns = c.tunnel.ActiveConns()
+	}
+
+	var tunnels []*admin.TunnelInfo
+	for _, r := range c.computed.Remotes {
+		tType := "forward"
+		if r.Reverse {
+			tType = "reverse"
+		}
+		if r.Socks {
+			tType = "socks"
+		}
+		tunnels = append(tunnels, &admin.TunnelInfo{
+			ID:          r.String(),
+			Type:        tType,
+			Local:       r.LocalHost + ":" + r.LocalPort,
+			Remote:      r.RemoteHost + ":" + r.RemotePort,
+			Protocol:    r.LocalProto,
+			ActiveConns: activeConns,
+			BytesSent:   sent,
+			BytesRecv:   recv,
+		})
+	}
+
+	return &admin.ClientState{
+		ServerURL:       c.server,
+		ConnectionState: c.connState,
+		ConnectedAt:     c.connectedAt,
+		Fingerprint:     c.config.Fingerprint,
+		RetryAttempt:    c.retryAttempt,
+		NextRetryIn:     c.nextRetryIn,
+		Latency:         c.latency,
+		Tunnels:         tunnels,
+	}
+}
+
+// TriggerReconnect immediately triggers a reconnect, cancelling any active connection
+// or bypassing retry backoff sleep
+func (c *Client) TriggerReconnect() {
+	c.adminMu.RLock()
+	cancel := c.connCancel
+	c.adminMu.RUnlock()
+	if cancel != nil {
+		cancel()
+	}
+	select {
+	case c.reconnectCh <- struct{}{}:
+	default:
+	}
+}
+

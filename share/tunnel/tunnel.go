@@ -71,6 +71,11 @@ func New(c Config) *Tunnel {
 	return t
 }
 
+// ActiveConns returns the number of currently open tunnel connections
+func (t *Tunnel) ActiveConns() int32 {
+	return t.connStats.OpenCount()
+}
+
 //BindSSH provides an active SSH for use for tunnelling
 func (t *Tunnel) BindSSH(ctx context.Context, c ssh.Conn, reqs <-chan *ssh.Request, chans <-chan ssh.NewChannel) error {
 	//link ctx to ssh-conn

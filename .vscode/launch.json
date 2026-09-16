@@ -1,0 +1,98 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Chisel Server (with Admin)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/main.go",
+      "args": [
+        "server",
+        "--port",
+        "8080",
+        "--admin",
+        "127.0.0.1:9000",
+        "--reverse",
+        "--verbose"
+      ],
+      "env": {},
+      "showLog": true
+    },
+    {
+      "name": "Debug Chisel Server (with Auth & Admin)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/main.go",
+      "args": [
+        "server",
+        "--port",
+        "8080",
+        "--admin",
+        "127.0.0.1:9000",
+        "--admin-auth",
+        "admin:secret",
+        "--auth",
+        "test:test",
+        "--reverse",
+        "--verbose"
+      ],
+      "env": {},
+      "showLog": true
+    },
+    {
+      "name": "Debug Chisel Client (with Admin)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/main.go",
+      "args": [
+        "client",
+        "--admin",
+        "127.0.0.1:9001",
+        "--verbose",
+        "http://127.0.0.1:8080",
+        "4000:127.0.0.1:8080"
+      ],
+      "env": {},
+      "showLog": true
+    },
+    {
+      "name": "Debug Chisel Client (with Auth & Admin)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/main.go",
+      "args": [
+        "client",
+        "--admin",
+        "127.0.0.1:9001",
+        "--auth",
+        "test:test",
+        "--verbose",
+        "http://127.0.0.1:8080",
+        "3000:127.0.0.1:8080"
+      ],
+      "env": {},
+      "showLog": true
+    },
+    {
+      "name": "Debug Admin Package Unit Tests",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/share/admin"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Server & Client Together",
+      "configurations": [
+        "Debug Chisel Server (with Admin)",
+        "Debug Chisel Client (with Admin)"
+      ],
+      "stopAll": true
+    }
+  ]
+}

@@ -23,6 +23,14 @@ func (c *ConnCount) Close() {
 	atomic.AddInt32(&c.open, -1)
 }
 
+func (c *ConnCount) OpenCount() int32 {
+	return atomic.LoadInt32(&c.open)
+}
+
+func (c *ConnCount) TotalCount() int32 {
+	return atomic.LoadInt32(&c.count)
+}
+
 func (c *ConnCount) String() string {
 	return fmt.Sprintf("[%d/%d]", atomic.LoadInt32(&c.open), atomic.LoadInt32(&c.count))
 }

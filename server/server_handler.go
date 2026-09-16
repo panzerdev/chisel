@@ -1,6 +1,7 @@
 package chserver
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	chshare "github.com/jpillora/chisel/share"
+	"github.com/jpillora/chisel/share/admin"
 	"github.com/jpillora/chisel/share/cnet"
 	"github.com/jpillora/chisel/share/settings"
 	"github.com/jpillora/chisel/share/tunnel"
@@ -58,9 +60,24 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	conn := cnet.NewWebSocketConn(wsConn)
+	var (
+		sessSent int64
+		sessRecv int64
+	)
+	counted := cnet.NewCountedConn(conn, func(n int) {
+		atomic.AddInt64(&sessRecv, int64(n))
+		if s.AdminServer != nil {
+			s.AdminServer.Hub().AddTraffic(0, int64(n))
+		}
+	}, func(n int) {
+		atomic.AddInt64(&sessSent, int64(n))
+		if s.AdminServer != nil {
+			s.AdminServer.Hub().AddTraffic(int64(n), 0)
+		}
+	})
 	// perform SSH handshake on net.Conn
 	l.Debugf("Handshaking with %s...", req.RemoteAddr)
-	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.sshConfig)
+	sshConn, chans, reqs, err := ssh.NewServerConn(counted, s.sshConfig)
 	if err != nil {
 		s.logHandshakeFailure(err)
 		return
@@ -153,8 +170,36 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 		username = user.Name
 	}
 	opened := time.Now()
+	remotesList := c.Remotes.Encode()
 	l.Infof("Open (user=%s addr=%s remotes=%s)",
-		username, req.RemoteAddr, strings.Join(c.Remotes.Encode(), ","))
+		username, req.RemoteAddr, strings.Join(remotesList, ","))
+
+	sessCtx, cancelSession := context.WithCancel(req.Context())
+	sessInfo := &admin.SessionInfo{
+		ID:          id,
+		RemoteAddr:  req.RemoteAddr,
+		User:        username,
+		ConnectedAt: opened,
+		Remotes:     remotesList,
+		CancelFn:    cancelSession,
+		BytesSentFn: func() int64 { return atomic.LoadInt64(&sessSent) },
+		BytesRecvFn: func() int64 { return atomic.LoadInt64(&sessRecv) },
+	}
+
+	s.adminMu.Lock()
+	s.sessions[id] = sessInfo
+	s.adminMu.Unlock()
+
+	defer func() {
+		s.adminMu.Lock()
+		delete(s.sessions, id)
+		s.adminMu.Unlock()
+	}()
+
+	if s.AdminServer != nil {
+		s.AdminServer.Hub().AddLog(fmt.Sprintf("Session #%d opened from %s (user=%s)", id, req.RemoteAddr, username))
+	}
+
 	//tunnel per ssh connection
 	tunnelConfig := tunnel.Config{
 		Logger:    l,
@@ -174,8 +219,9 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	tunnel := tunnel.New(tunnelConfig)
+	sessInfo.ActiveConnsFn = tunnel.ActiveConns
 	//bind
-	eg, ctx := errgroup.WithContext(req.Context())
+	eg, ctx := errgroup.WithContext(sessCtx)
 	eg.Go(func() error {
 		//connected, handover ssh connection for tunnel to use, and block
 		return tunnel.BindSSH(ctx, sshConn, reqs, chans)
@@ -194,8 +240,12 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	if err != nil && !strings.HasSuffix(err.Error(), "EOF") {
 		errmsg = fmt.Sprintf(" (error %s)", err)
 	}
-	l.Infof("Close (user=%s addr=%s duration=%s)%s",
+	closeMsg := fmt.Sprintf("Close (user=%s addr=%s duration=%s)%s",
 		username, req.RemoteAddr, time.Since(opened), errmsg)
+	l.Infof("%s", closeMsg)
+	if s.AdminServer != nil {
+		s.AdminServer.Hub().AddLog(fmt.Sprintf("Session #%d closed: %s", id, closeMsg))
+	}
 }
 
 func (s *Server) logHandshakeFailure(err error) {

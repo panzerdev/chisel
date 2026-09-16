@@ -9,10 +9,13 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	chshare "github.com/jpillora/chisel/share"
+	"github.com/jpillora/chisel/share/admin"
 	"github.com/jpillora/chisel/share/ccrypto"
 	"github.com/jpillora/chisel/share/cio"
 	"github.com/jpillora/chisel/share/cnet"
@@ -23,6 +26,8 @@ import (
 
 // Config is the configuration for the chisel service
 type Config struct {
+	Admin     string        `opts:"name=admin,short=-" help:"An optional address (e.g. 127.0.0.1:9000) to serve the Admin Web UI and REST API."`
+	AdminAuth string        `opts:"name=admin-auth,short=-" help:"Optional credentials for the Admin Web UI/API in the form <user:pass>."`
 	KeySeed   string        `opts:"name=key,short=-" help:"(deprecated use --keygen and --keyfile instead) An optional string to seed the generation of a ECDSA public and private key pair. All communications will be secured using this key pair. Share the subsequent fingerprint with clients to enable detection of man-in-the-middle attacks (defaults to the CHISEL_KEY environment variable, otherwise a new key is generate each run)."`
 	KeyFile   string        `opts:"name=keyfile,short=-" help:"An optional path to a PEM-encoded SSH private key. When this flag is set, the --key option is ignored, and the provided private key is used to secure all communications. (defaults to the CHISEL_KEY_FILE environment variable). Since ECDSA keys are short, you may also set keyfile to the inline key string itself, exactly as printed by --keygen (a base64 string with a \"ck-\" prefix); no extra base64 encoding is needed."`
 	AuthFile  string        `opts:"name=authfile,short=-" help:"An optional path to a users.json file. This file should be an object with users defined like:\n  {\n    \"<user:pass>\": [\"<addr-regex>\",\"<addr-regex>\"]\n  }\nwhen <user> connects, their <pass> will be verified and then each of the remote addresses will be compared against the list of address regular expressions for a match. Patterns are NOT anchored by default: \"10.0.0.1:80\" also matches \"210.0.0.1:8080\", and \".\" matches any character. Anchor your patterns, e.g. \"^10\\.0\\.0\\.1:80$\". The empty string \"\" matches every address. Addresses will always come in the form \"<remote-host>:<remote-port>\" for normal remotes, \"R:<local-interface>:<local-port>\" for reverse port forwarding remotes, and \"socks\" for SOCKS5 proxy access. Note that SOCKS5 access previously bypassed this list; existing authfiles which should allow SOCKS5 must add an entry matching \"socks\" (the empty wildcard \"\" matches everything, including \"socks\"). This file will be automatically reloaded on change. Reloads apply to new connections and to new tunnels of connected clients; established tunnels are not interrupted."`
@@ -44,6 +49,9 @@ type Server struct {
 	sessCount    int32
 	sshConfig    *ssh.ServerConfig
 	users        *settings.UserIndex
+	adminMu      sync.RWMutex
+	sessions     map[int32]*admin.SessionInfo
+	AdminServer  *admin.Server
 }
 
 var upgrader = websocket.Upgrader{
@@ -140,6 +148,18 @@ func NewServer(c *Config) (*Server, error) {
 	if c.Reverse {
 		server.Infof("Reverse tunnelling enabled")
 	}
+	server.sessions = make(map[int32]*admin.SessionInfo)
+	if c.Admin != "" {
+		hub := admin.NewHub("server", chshare.BuildVersion, runtime.Version())
+		hub.SetServerStateProvider(server.GetServerState, server.CloseSession)
+		server.Logger.SetHook(func(msg string) {
+			hub.AddLog(msg)
+		})
+		server.AdminServer = admin.NewServer(server.Logger, hub, admin.ServerConfig{
+			Addr: c.Admin,
+			Auth: c.AdminAuth,
+		})
+	}
 	return server, nil
 }
 
@@ -166,6 +186,11 @@ func (s *Server) StartContext(ctx context.Context, host, port string) error {
 	}
 	if s.reverseProxy != nil {
 		s.Infof("Reverse proxy enabled")
+	}
+	if s.AdminServer != nil {
+		if err := s.AdminServer.Start(ctx); err != nil {
+			return err
+		}
 	}
 	l, err := s.listener(host, port)
 	if err != nil {
@@ -244,3 +269,67 @@ func (s *Server) DeleteUser(user string) {
 func (s *Server) ResetUsers(users []*settings.User) {
 	s.users.Reset(users)
 }
+
+// GetServerState collects active sessions and tunnels for the admin telemetry hub
+func (s *Server) GetServerState() *admin.ServerState {
+	s.adminMu.RLock()
+	defer s.adminMu.RUnlock()
+
+	sessions := make([]*admin.SessionInfo, 0, len(s.sessions))
+	var tunnels []*admin.TunnelInfo
+
+	for _, sess := range s.sessions {
+		sCopy := *sess
+		if sess.BytesSentFn != nil {
+			sCopy.BytesSent = sess.BytesSentFn()
+		}
+		if sess.BytesRecvFn != nil {
+			sCopy.BytesRecv = sess.BytesRecvFn()
+		}
+		if sess.ActiveConnsFn != nil {
+			sCopy.ActiveConns = sess.ActiveConnsFn()
+		}
+		sessions = append(sessions, &sCopy)
+		for _, rStr := range sess.Remotes {
+			r, err := settings.DecodeRemote(rStr)
+			if err != nil {
+				continue
+			}
+			tType := "forward"
+			if r.Reverse {
+				tType = "reverse"
+			}
+			if r.Socks {
+				tType = "socks"
+			}
+			tunnels = append(tunnels, &admin.TunnelInfo{
+				ID:          fmt.Sprintf("sess#%d-%s", sess.ID, r.String()),
+				Type:        tType,
+				Local:       r.LocalHost + ":" + r.LocalPort,
+				Remote:      r.RemoteHost + ":" + r.RemotePort,
+				Protocol:    r.LocalProto,
+				ActiveConns: sCopy.ActiveConns,
+				BytesSent:   sCopy.BytesSent,
+				BytesRecv:   sCopy.BytesRecv,
+			})
+		}
+	}
+
+	return &admin.ServerState{
+		Sessions: sessions,
+		Tunnels:  tunnels,
+	}
+}
+
+// CloseSession disconnects a specific client session by ID
+func (s *Server) CloseSession(id int32) bool {
+	s.adminMu.RLock()
+	sess, found := s.sessions[id]
+	s.adminMu.RUnlock()
+	if !found || sess.CancelFn == nil {
+		return false
+	}
+	sess.CancelFn()
+	return true
+}
+

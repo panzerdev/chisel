@@ -14,6 +14,7 @@ type Logger struct {
 	prefix      string
 	logger      *log.Logger
 	info, debug *bool
+	hook        *func(string)
 }
 
 func NewLogger(prefix string) *Logger {
@@ -31,14 +32,22 @@ func NewLoggerFlag(prefix string, flag int) *Logger {
 }
 
 func (l *Logger) Infof(f string, args ...interface{}) {
+	msg := fmt.Sprintf(f, args...)
 	if l.IsInfo() {
-		l.logger.Printf(l.prefix+": "+f, args...)
+		l.logger.Printf("%s: %s", l.prefix, msg)
+	}
+	if l.hook != nil && *l.hook != nil {
+		(*l.hook)(l.prefix + ": " + msg)
 	}
 }
 
 func (l *Logger) Debugf(f string, args ...interface{}) {
+	msg := fmt.Sprintf(f, args...)
 	if l.IsDebug() {
-		l.logger.Printf(l.prefix+": "+f, args...)
+		l.logger.Printf("%s: %s", l.prefix, msg)
+	}
+	if l.hook != nil && *l.hook != nil {
+		(*l.hook)(l.prefix + ": " + msg)
 	}
 }
 
@@ -51,10 +60,24 @@ func (l *Logger) SetOutput(w io.Writer) {
 	l.logger.SetOutput(w)
 }
 
+// SetHook attaches an observer callback to every logged message
+func (l *Logger) SetHook(h func(string)) {
+	if l.hook == nil {
+		l.hook = &h
+	} else {
+		*l.hook = h
+	}
+}
+
 func (l *Logger) Fork(prefix string, args ...interface{}) *Logger {
 	//slip the parent prefix at the front
 	args = append([]interface{}{l.prefix}, args...)
 	ll := NewLogger(fmt.Sprintf("%s: "+prefix, args...))
+	if l.hook == nil {
+		var noop func(string)
+		l.hook = &noop
+	}
+	ll.hook = l.hook
 	//store link to parent settings too
 	ll.Info = l.Info
 	if l.info != nil {

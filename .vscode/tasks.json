@@ -1,0 +1,102 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Chisel Server (with Admin)",
+      "type": "shell",
+      "command": "go run main.go server --port 8080 --admin 127.0.0.1:9000 --reverse --verbose",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Listening on",
+          "endsPattern": "Listening on"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Run Chisel Server (with Admin & Auth)",
+      "type": "shell",
+      "command": "go run main.go server --port 8080 --admin 127.0.0.1:9000 --admin-auth admin:secret --auth test:test --reverse --verbose",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Listening on",
+          "endsPattern": "Listening on"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Run Chisel Client (with Admin)",
+      "type": "shell",
+      "command": "go run main.go client --admin 127.0.0.1:9001 --verbose http://127.0.0.1:8080 3000:127.0.0.1:8080",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Connecting to",
+          "endsPattern": "Connected"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Run Chisel Client (with Auth & Admin)",
+      "type": "shell",
+      "command": "go run main.go client --admin 127.0.0.1:9001 --auth test:test --verbose http://127.0.0.1:8080 3000:127.0.0.1:8080",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Connecting to",
+          "endsPattern": "Connected"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Run Unit & Admin Tests",
+      "type": "shell",
+      "command": "go test -v ./share/admin ./client ./server ./share/...",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}
