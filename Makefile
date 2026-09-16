@@ -29,6 +29,9 @@ docker:
 docker-push: ## Build and push docker image with TAG and latest (e.g. make docker-push TAG=v1.0.0)
 	@./build-and-push.sh $(TAG)
 
+build-all: ## Build binaries for all OS/Arch platforms inside Docker into build/ (e.g. make build-all VERSION=v1.0.0)
+	@./build-all.sh $(VERSION)
+
 dep: ## Get the dependencies
 	@go install github.com/goreleaser/goreleaser/v2@latest
 	@go install github.com/boumenot/gocover-cobertura@latest
@@ -58,4 +61,4 @@ run-server: ## Run local server with admin interface
 run-client: ## Run local client with admin interface
 	go run main.go client --admin 127.0.0.1:9001 --verbose http://127.0.0.1:8080 3000:127.0.0.1:8080
 
-.PHONY: all freebsd linux windows docker docker-push dep lint test release clean run-server run-client
+.PHONY: all freebsd linux windows docker docker-push build-all dep lint test release clean run-server run-client
