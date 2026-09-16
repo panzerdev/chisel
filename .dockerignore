@@ -1,0 +1,9 @@
+.git
+.vscode
+build/
+bin/
+dist/
+release/
+chisel
+*.swp
+*.log

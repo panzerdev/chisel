@@ -20,7 +20,7 @@ import (
 )
 
 // chiselRepo is rendered in the "Read more:" section of every help screen.
-const chiselRepo = "https://github.com/jpillora/chisel"
+var chiselRepo = "https://github.com/panzerdev/chisel"
 
 // versionTemplate keeps the Go runtime version alongside the build version in
 // the help text. The --version flag still prints the build version alone.
