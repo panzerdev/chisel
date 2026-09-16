@@ -188,7 +188,7 @@
 
   function renderSessions(data) {
     if (data.mode !== 'server' || !data.server) return;
-    const sessions = data.server.sessions || [];
+    const sessions = (data.server.sessions || []).slice().sort((a, b) => a.id - b.id);
     elements.sessionBadgeCount.textContent = `${sessions.length} Connected`;
 
     if (sessions.length === 0) {

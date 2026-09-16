@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -315,6 +316,13 @@ func (s *Server) GetServerState() *admin.ServerState {
 			})
 		}
 	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].ID < sessions[j].ID
+	})
+	sort.Slice(tunnels, func(i, j int) bool {
+		return tunnels[i].ID < tunnels[j].ID
+	})
 
 	return &admin.ServerState{
 		Sessions: sessions,
