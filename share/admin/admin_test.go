@@ -211,3 +211,25 @@ func TestAdminServerLiveLifecycle(t *testing.T) {
 		t.Fatalf("expected mode client in live response: %s", string(data))
 	}
 }
+
+func TestHubTrafficCounters(t *testing.T) {
+	hub := NewHub("server", "1.0.0-test", "go1.25")
+	hub.AddTraffic(1024, 2048)
+	st := hub.Status()
+	if st.TotalBytesSent != 1024 {
+		t.Fatalf("expected 1024 bytes sent, got %d", st.TotalBytesSent)
+	}
+	if st.TotalBytesRecv != 2048 {
+		t.Fatalf("expected 2048 bytes recv, got %d", st.TotalBytesRecv)
+	}
+
+	hub.AddTraffic(512, 512)
+	st = hub.Status()
+	if st.TotalBytesSent != 1536 {
+		t.Fatalf("expected 1536 bytes sent, got %d", st.TotalBytesSent)
+	}
+	if st.TotalBytesRecv != 2560 {
+		t.Fatalf("expected 2560 bytes recv, got %d", st.TotalBytesRecv)
+	}
+}
+

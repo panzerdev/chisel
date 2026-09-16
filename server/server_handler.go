@@ -61,16 +61,16 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	}
 	conn := cnet.NewWebSocketConn(wsConn)
 	var (
-		sessSent int64
-		sessRecv int64
+		sessSent atomic.Int64
+		sessRecv atomic.Int64
 	)
 	counted := cnet.NewCountedConn(conn, func(n int) {
-		atomic.AddInt64(&sessRecv, int64(n))
+		sessRecv.Add(int64(n))
 		if s.AdminServer != nil {
 			s.AdminServer.Hub().AddTraffic(0, int64(n))
 		}
 	}, func(n int) {
-		atomic.AddInt64(&sessSent, int64(n))
+		sessSent.Add(int64(n))
 		if s.AdminServer != nil {
 			s.AdminServer.Hub().AddTraffic(int64(n), 0)
 		}
@@ -182,8 +182,8 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 		ConnectedAt: opened,
 		Remotes:     remotesList,
 		CancelFn:    cancelSession,
-		BytesSentFn: func() int64 { return atomic.LoadInt64(&sessSent) },
-		BytesRecvFn: func() int64 { return atomic.LoadInt64(&sessRecv) },
+		BytesSentFn: sessSent.Load,
+		BytesRecvFn: sessRecv.Load,
 	}
 
 	s.adminMu.Lock()

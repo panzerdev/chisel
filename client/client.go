@@ -83,8 +83,8 @@ type Client struct {
 	latency      string
 	reconnectCh  chan struct{}
 	connCancel   context.CancelFunc
-	totalSent    int64
-	totalRecv    int64
+	totalSent    atomic.Int64
+	totalRecv    atomic.Int64
 }
 
 // NewClient creates a new client instance
@@ -369,8 +369,8 @@ func (c *Client) GetClientState() *admin.ClientState {
 	c.adminMu.RLock()
 	defer c.adminMu.RUnlock()
 
-	sent := atomic.LoadInt64(&c.totalSent)
-	recv := atomic.LoadInt64(&c.totalRecv)
+	sent := c.totalSent.Load()
+	recv := c.totalRecv.Load()
 	var activeConns int32
 	if c.tunnel != nil {
 		activeConns = c.tunnel.ActiveConns()

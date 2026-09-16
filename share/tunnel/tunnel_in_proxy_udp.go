@@ -58,7 +58,7 @@ type udpListener struct {
 	inbound     *net.UDPConn
 	outboundMut sync.Mutex
 	outbound    *udpChannel
-	sent, recv  int64
+	sent, recv  atomic.Int64
 	maxMTU      int
 }
 
@@ -78,7 +78,7 @@ func (u *udpListener) run(ctx context.Context) error {
 		u.Debugf("listen: %s", err)
 		return err
 	}
-	u.Debugf("Close (sent %s received %s)", sizestr.ToString(u.sent), sizestr.ToString(u.recv))
+	u.Debugf("Close (sent %s received %s)", sizestr.ToString(u.sent.Load()), sizestr.ToString(u.recv.Load()))
 	return nil
 }
 
@@ -111,7 +111,7 @@ func (u *udpListener) runInbound(ctx context.Context) error {
 			return u.Errorf("encode error: %w", err)
 		}
 		//stats
-		atomic.AddInt64(&u.sent, int64(n))
+		u.sent.Add(int64(n))
 	}
 	return nil
 }
@@ -144,7 +144,7 @@ func (u *udpListener) runOutbound(ctx context.Context) error {
 			return u.Errorf("write error: %w", err)
 		}
 		//stats
-		atomic.AddInt64(&u.recv, int64(n))
+		u.recv.Add(int64(n))
 	}
 	return nil
 }

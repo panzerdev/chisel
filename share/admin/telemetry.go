@@ -87,12 +87,12 @@ type Hub struct {
 	goVersion    string
 
 	// Counters
-	totalSent int64
-	totalRecv int64
-	lastSent  int64
-	lastRecv  int64
-	rateSent  int64
-	rateRecv  int64
+	totalSent atomic.Int64
+	totalRecv atomic.Int64
+	lastSent  atomic.Int64
+	lastRecv  atomic.Int64
+	rateSent  atomic.Int64
+	rateRecv  atomic.Int64
 
 	// Log buffer
 	logs       []LogEntry
@@ -138,10 +138,10 @@ func (h *Hub) SetClientStateProvider(fn func() *ClientState, reconn func()) {
 // AddTraffic increments total sent and received byte counters
 func (h *Hub) AddTraffic(sent, recv int64) {
 	if sent > 0 {
-		atomic.AddInt64(&h.totalSent, sent)
+		h.totalSent.Add(sent)
 	}
 	if recv > 0 {
-		atomic.AddInt64(&h.totalRecv, recv)
+		h.totalRecv.Add(recv)
 	}
 }
 
@@ -195,21 +195,21 @@ func (h *Hub) meterLoop() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		s := atomic.LoadInt64(&h.totalSent)
-		r := atomic.LoadInt64(&h.totalRecv)
-		ls := atomic.SwapInt64(&h.lastSent, s)
-		lr := atomic.SwapInt64(&h.lastRecv, r)
-		atomic.StoreInt64(&h.rateSent, s-ls)
-		atomic.StoreInt64(&h.rateRecv, r-lr)
+		s := h.totalSent.Load()
+		r := h.totalRecv.Load()
+		ls := h.lastSent.Swap(s)
+		lr := h.lastRecv.Swap(r)
+		h.rateSent.Store(s - ls)
+		h.rateRecv.Store(r - lr)
 	}
 }
 
 // Status builds the complete system status response
 func (h *Hub) Status() *SystemStatus {
-	sent := atomic.LoadInt64(&h.totalSent)
-	recv := atomic.LoadInt64(&h.totalRecv)
-	rs := atomic.LoadInt64(&h.rateSent)
-	rr := atomic.LoadInt64(&h.rateRecv)
+	sent := h.totalSent.Load()
+	recv := h.totalRecv.Load()
+	rs := h.rateSent.Load()
+	rr := h.rateRecv.Load()
 
 	st := &SystemStatus{
 		Mode:           h.mode,

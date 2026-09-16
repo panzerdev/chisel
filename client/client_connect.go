@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -145,12 +144,12 @@ func (c *Client) connectionOnce(ctx context.Context) (connected bool, err error)
 	}
 	conn := cnet.NewWebSocketConn(wsConn)
 	counted := cnet.NewCountedConn(conn, func(n int) {
-		atomic.AddInt64(&c.totalRecv, int64(n))
+		c.totalRecv.Add(int64(n))
 		if c.AdminServer != nil {
 			c.AdminServer.Hub().AddTraffic(0, int64(n))
 		}
 	}, func(n int) {
-		atomic.AddInt64(&c.totalSent, int64(n))
+		c.totalSent.Add(int64(n))
 		if c.AdminServer != nil {
 			c.AdminServer.Hub().AddTraffic(int64(n), 0)
 		}
