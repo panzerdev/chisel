@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1
+FROM golang:alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates coreutils
+
+# Cache dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+ARG VERSION=dev
+ENV VERSION=${VERSION}
+
+# Compile for all supported operating systems and architectures
+RUN mkdir -p /out && \
+    LDFLAGS="-s -w \
+      -X github.com/jpillora/chisel/share.BuildVersion=${VERSION} \
+      -X github.com/panzerdev/chisel/share.BuildVersion=${VERSION} \
+      -X main.chiselRepo=https://github.com/panzerdev/chisel" && \
+    TARGETS=" \
+      linux/amd64 \
+      linux/arm64 \
+      linux/arm/7 \
+      linux/386 \
+      linux/ppc64le \
+      linux/s390x \
+      linux/mips/softfloat \
+      linux/mipsle/softfloat \
+      darwin/amd64 \
+      darwin/arm64 \
+      windows/amd64 \
+      windows/arm64 \
+      windows/386 \
+      freebsd/amd64 \
+      freebsd/arm64 \
+      freebsd/386" && \
+    for target in $TARGETS; do \
+      OS=$(echo "$target" | cut -d/ -f1); \
+      ARCH=$(echo "$target" | cut -d/ -f2); \
+      SUB=$(echo "$target" | cut -d/ -f3); \
+      EXT=""; \
+      [ "$OS" = "windows" ] && EXT=".exe"; \
+      NAME="chisel_${OS}_${ARCH}"; \
+      export GOOS="$OS" GOARCH="$ARCH" CGO_ENABLED=0; \
+      if [ "$ARCH" = "arm" ] && [ -n "$SUB" ]; then \
+        export GOARM="$SUB"; \
+        NAME="chisel_${OS}_armv${SUB}"; \
+      elif [ -n "$SUB" ]; then \
+        export GOMIPS="$SUB"; \
+        NAME="chisel_${OS}_${ARCH}_${SUB}"; \
+      fi; \
+      echo "--> Compiling ${NAME}${EXT} (${OS}/${ARCH})..."; \
+      go build -trimpath -ldflags "$LDFLAGS" -o "/out/${NAME}${EXT}" . || exit 1; \
+      unset GOARM GOMIPS; \
+    done && \
+    cd /out && sha256sum * > SHA256SUMS.txt
+
+# Export stage: copies all binaries directly to host via BuildKit --output
+FROM scratch AS export
+COPY --from=builder /out/ /
