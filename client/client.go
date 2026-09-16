@@ -376,6 +376,7 @@ func (c *Client) GetClientState() *admin.ClientState {
 		activeConns = c.tunnel.ActiveConns()
 	}
 
+	authUser, _ := settings.ParseAuth(c.config.Auth)
 	var tunnels []*admin.TunnelInfo
 	for _, r := range c.computed.Remotes {
 		tType := "forward"
@@ -387,6 +388,7 @@ func (c *Client) GetClientState() *admin.ClientState {
 		}
 		tunnels = append(tunnels, &admin.TunnelInfo{
 			ID:          r.String(),
+			User:        authUser,
 			Type:        tType,
 			Local:       r.LocalHost + ":" + r.LocalPort,
 			Remote:      r.RemoteHost + ":" + r.RemotePort,

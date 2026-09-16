@@ -29,6 +29,7 @@ func TestAdminStatusAPI(t *testing.T) {
 			Tunnels: []*TunnelInfo{
 				{
 					ID:       "sess#1-3000:3000",
+					User:     "testuser",
 					Type:     "forward",
 					Local:    "0.0.0.0:3000",
 					Remote:   "127.0.0.1:3000",

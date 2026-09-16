@@ -163,7 +163,7 @@
     elements.tunnelBadgeCount.textContent = `${tunnels.length} Active`;
 
     if (tunnels.length === 0) {
-      elements.tunnelsBody.innerHTML = '<tr><td colspan="6" class="empty-state">No active tunnels configured</td></tr>';
+      elements.tunnelsBody.innerHTML = '<tr><td colspan="7" class="empty-state">No active tunnels configured</td></tr>';
       return;
     }
 
@@ -175,6 +175,7 @@
       return `
         <tr>
           <td><span class="type-pill ${typeClass}">${t.type}</span></td>
+          <td><span>${escapeHtml(t.user || '-')}</span></td>
           <td><span class="mono">${(t.protocol || 'tcp').toUpperCase()}</span></td>
           <td><strong class="mono">${escapeHtml(t.local || '-')}</strong></td>
           <td><span class="mono">${escapeHtml(t.remote || '-')}</span></td>

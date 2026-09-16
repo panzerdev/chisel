@@ -304,6 +304,7 @@ func (s *Server) GetServerState() *admin.ServerState {
 			}
 			tunnels = append(tunnels, &admin.TunnelInfo{
 				ID:          fmt.Sprintf("sess#%d-%s", sess.ID, r.String()),
+				User:        sCopy.User,
 				Type:        tType,
 				Local:       r.LocalHost + ":" + r.LocalPort,
 				Remote:      r.RemoteHost + ":" + r.RemotePort,

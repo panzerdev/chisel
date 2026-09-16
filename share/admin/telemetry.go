@@ -34,6 +34,7 @@ type SessionInfo struct {
 // TunnelInfo represents a configured or running tunnel/remote
 type TunnelInfo struct {
 	ID          string `json:"id"`
+	User        string `json:"user,omitempty"`
 	Type        string `json:"type"` // "forward", "reverse", "socks"
 	Local       string `json:"local"`
 	Remote      string `json:"remote"`
